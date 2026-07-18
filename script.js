@@ -1,5 +1,9 @@
 const PEOPLE = ['David', 'Ray', 'EJ', 'Ryan', 'Janna', 'Claire'];
 
+let POOL = null;
+let MODE = 'daily';
+let sessionStats = { correct: 0, total: 0 };
+
 // ---------- deterministic seeded RNG (mulberry32), seeded from a date string ----------
 function hashStringToSeed(str) {
   let h = 1779033703 ^ str.length;
@@ -52,47 +56,24 @@ function formatTimestamp(isoStr) {
   return `${d.toLocaleDateString(undefined, dateOpts)} · ${d.toLocaleTimeString(undefined, timeOpts)}`;
 }
 
-// ---------- main ----------
-async function init() {
-  try {
-    const dateKey = todayKey();
-    const rng = seededRandom(dateKey);
-
-    const res = await fetch('data/messages.json');
-    if (!res.ok) {
-      throw new Error(`Couldn't load messages.json (HTTP ${res.status}). Check that it's inside a "data" folder next to index.html.`);
-    }
-    const pool = await res.json();
-    if (!Array.isArray(pool) || pool.length === 0) {
-      throw new Error('messages.json loaded but was empty or malformed.');
-    }
-
-    await runGame(dateKey, rng, pool);
-  } catch (err) {
-    document.getElementById('timestamp').textContent = 'Something went wrong loading today\u2019s message.';
-    document.getElementById('bubble').textContent = String(err.message || err);
-    document.getElementById('options').innerHTML = '';
-  }
+function pickMessageAndOptions(rng) {
+  const msg = POOL[Math.floor(rng() * POOL.length)];
+  const distractorPool = PEOPLE.filter(p => p !== msg.s);
+  const distractors = shuffleWithRng(distractorPool, rng).slice(0, 3);
+  const options = shuffleWithRng([msg.s, ...distractors], rng);
+  return { msg, options };
 }
 
-async function runGame(dateKey, rng, pool) {
-  const msgIndex = Math.floor(rng() * pool.length);
-  const msg = pool[msgIndex];
-
-  const distractorPool = PEOPLE.filter(p => p !== msg.s);
-  const shuffledDistractors = shuffleWithRng(distractorPool, rng).slice(0, 3);
-  const options = shuffleWithRng([msg.s, ...shuffledDistractors], rng);
-
+// ---------- shared rendering ----------
+function renderPuzzleShell(msg, options) {
   document.getElementById('timestamp').textContent = formatTimestamp(msg.d);
   document.getElementById('bubble').textContent = msg.t;
-
-  renderStreak();
-
-  const saved = JSON.parse(localStorage.getItem('buttonDaily_' + dateKey) || 'null');
+  document.getElementById('result').textContent = '';
+  document.getElementById('result').className = 'result';
+  document.getElementById('nextBtn').classList.add('hidden');
 
   const optionsEl = document.getElementById('options');
   optionsEl.innerHTML = '';
-
   options.forEach(name => {
     const btn = document.createElement('button');
     btn.className = 'option';
@@ -100,26 +81,10 @@ async function runGame(dateKey, rng, pool) {
     btn.dataset.name = name;
     optionsEl.appendChild(btn);
   });
-
-  if (saved) {
-    lockIn(options, msg.s, saved.chosen, dateKey, false);
-  } else {
-    optionsEl.querySelectorAll('.option').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const chosen = btn.dataset.name;
-        const correct = chosen === msg.s;
-        localStorage.setItem(
-          'buttonDaily_' + dateKey,
-          JSON.stringify({ chosen, correct })
-        );
-        updateStreak(correct, dateKey);
-        lockIn(options, msg.s, chosen, dateKey, true);
-      });
-    });
-  }
+  return optionsEl;
 }
 
-function lockIn(options, correctName, chosenName, dateKey, animate) {
+function lockIn(correctName, chosenName) {
   const optionsEl = document.getElementById('options');
   optionsEl.querySelectorAll('.option').forEach(btn => {
     btn.disabled = true;
@@ -133,8 +98,33 @@ function lockIn(options, correctName, chosenName, dateKey, animate) {
     ? `Correct — it was ${correctName}.`
     : `Not quite — it was ${correctName}, you picked ${chosenName}.`;
   resultEl.className = 'result ' + (wasCorrect ? 'correct-text' : 'wrong-text');
+  return wasCorrect;
+}
 
+// ---------- daily mode ----------
+function startDaily() {
+  const dateKey = todayKey();
+  const rng = seededRandom(dateKey);
+  const { msg, options } = pickMessageAndOptions(rng);
+
+  const optionsEl = renderPuzzleShell(msg, options);
   renderStreak();
+
+  const saved = JSON.parse(localStorage.getItem('buttonDaily_' + dateKey) || 'null');
+
+  if (saved) {
+    lockIn(msg.s, saved.chosen);
+  } else {
+    optionsEl.querySelectorAll('.option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const chosen = btn.dataset.name;
+        const correct = chosen === msg.s;
+        localStorage.setItem('buttonDaily_' + dateKey, JSON.stringify({ chosen, correct }));
+        updateStreak(correct, dateKey);
+        lockIn(msg.s, chosen);
+      });
+    });
+  }
 }
 
 function updateStreak(correct, dateKey) {
@@ -149,11 +139,7 @@ function updateStreak(correct, dateKey) {
   const yKey = `${y}-${m}-${d}`;
 
   if (correct) {
-    if (lastPlayed === yKey || lastPlayed === dateKey) {
-      streak += 1;
-    } else {
-      streak = 1;
-    }
+    streak = (lastPlayed === yKey || lastPlayed === dateKey) ? streak + 1 : 1;
   } else {
     streak = 0;
   }
@@ -166,6 +152,81 @@ function renderStreak() {
   const streak = parseInt(localStorage.getItem('buttonDaily_streak') || '0', 10);
   const el = document.getElementById('streak');
   el.textContent = streak > 0 ? `🔥 ${streak}-day streak` : '';
+}
+
+// ---------- free play mode ----------
+function startFreePlay() {
+  const rng = Math.random; // genuine randomness each round, not date-seeded
+  const { msg, options } = pickMessageAndOptions(rng);
+
+  const optionsEl = renderPuzzleShell(msg, options);
+  renderSessionTally();
+
+  optionsEl.querySelectorAll('.option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const chosen = btn.dataset.name;
+      const wasCorrect = lockIn(msg.s, chosen);
+      sessionStats.total += 1;
+      if (wasCorrect) sessionStats.correct += 1;
+      renderSessionTally();
+      document.getElementById('nextBtn').classList.remove('hidden');
+    });
+  });
+}
+
+function renderSessionTally() {
+  const el = document.getElementById('sessionTally');
+  if (MODE !== 'free' || sessionStats.total === 0) {
+    el.textContent = '';
+  } else {
+    el.textContent = `${sessionStats.correct}/${sessionStats.total} correct this session`;
+  }
+}
+
+// ---------- mode switching ----------
+function setMode(mode) {
+  MODE = mode;
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+
+  const streakEl = document.getElementById('streak');
+  const tallyEl = document.getElementById('sessionTally');
+
+  if (mode === 'daily') {
+    tallyEl.textContent = '';
+    streakEl.style.display = '';
+    startDaily();
+  } else {
+    streakEl.style.display = 'none';
+    startFreePlay();
+  }
+}
+
+// ---------- main ----------
+async function init() {
+  try {
+    const res = await fetch('data/messages.json');
+    if (!res.ok) {
+      throw new Error(`Couldn't load messages.json (HTTP ${res.status}). Check that it's inside a "data" folder next to index.html.`);
+    }
+    const pool = await res.json();
+    if (!Array.isArray(pool) || pool.length === 0) {
+      throw new Error('messages.json loaded but was empty or malformed.');
+    }
+    POOL = pool;
+
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => setMode(btn.dataset.mode));
+    });
+    document.getElementById('nextBtn').addEventListener('click', () => startFreePlay());
+
+    startDaily();
+  } catch (err) {
+    document.getElementById('timestamp').textContent = 'Something went wrong loading today\u2019s message.';
+    document.getElementById('bubble').textContent = String(err.message || err);
+    document.getElementById('options').innerHTML = '';
+  }
 }
 
 init();
