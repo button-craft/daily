@@ -4,6 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BUTTON Daily</title>
+<script>
+  // If this page was reached without a trailing slash (e.g. .../daily instead of
+  // .../daily/), fix the URL BEFORE any relative resources (CSS/JS/JSON) are
+  // requested. Without this, GitHub Pages still serves this HTML for the bare path,
+  // but the browser resolves script.js / data/messages.json against the wrong
+  // parent folder, causing silent 404s and an infinite "loading…" with no visible error.
+  (function () {
+    const path = window.location.pathname;
+    const isFile = path.split('/').pop().includes('.');
+    if (!path.endsWith('/') && !isFile) {
+      window.location.replace(window.location.href + '/');
+    }
+  })();
+</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
