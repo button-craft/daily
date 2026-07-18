@@ -1,6 +1,7 @@
 const PEOPLE = ['David', 'Ray', 'EJ', 'Ryan', 'Janna', 'Claire'];
 
 let POOL = null;
+let TIMELINE = null; // chronological chat-rename history: [{d: iso-date, n: name}, ...]
 let MODE = 'daily';
 let sessionStats = { correct: 0, total: 0 };
 
@@ -56,9 +57,36 @@ function formatTimestamp(isoStr) {
   return `${d.toLocaleDateString(undefined, dateOpts)} · ${d.toLocaleTimeString(undefined, timeOpts)}`;
 }
 
+// Finds what the group chat was named at the moment a given message was sent —
+// i.e. the most recent rename at or before that timestamp. TIMELINE is sorted
+// chronologically, so this is a standard binary search for "rightmost entry <= target".
+function getChatNameAt(isoStr) {
+  if (!TIMELINE || TIMELINE.length === 0) return null;
+  if (isoStr < TIMELINE[0].d) return TIMELINE[0].n; // before the first known rename
+
+  let lo = 0, hi = TIMELINE.length - 1, ans = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (TIMELINE[mid].d <= isoStr) {
+      ans = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return TIMELINE[ans].n;
+}
+
+// Janna wasn't part of the group until later — excluding her as a guessable option
+// for anything sent before this date avoids an obviously-unfair distractor.
+const JANNA_CUTOFF = '2021-08-27T00:00:00';
+
 function pickMessageAndOptions(rng) {
   const msg = POOL[Math.floor(rng() * POOL.length)];
-  const distractorPool = PEOPLE.filter(p => p !== msg.s);
+  const eligiblePeople = msg.d < JANNA_CUTOFF
+    ? PEOPLE.filter(p => p !== 'Janna')
+    : PEOPLE;
+  const distractorPool = eligiblePeople.filter(p => p !== msg.s);
   const distractors = shuffleWithRng(distractorPool, rng).slice(0, 3);
   const options = shuffleWithRng([msg.s, ...distractors], rng);
   return { msg, options };
@@ -67,10 +95,13 @@ function pickMessageAndOptions(rng) {
 // ---------- shared rendering ----------
 function renderPuzzleShell(msg, options) {
   document.getElementById('timestamp').textContent = formatTimestamp(msg.d);
+  const chatName = getChatNameAt(msg.d);
+  document.getElementById('chatTitle').textContent = chatName ? `"${chatName}"` : '';
   document.getElementById('bubble').textContent = msg.t;
   document.getElementById('result').textContent = '';
   document.getElementById('result').className = 'result';
   document.getElementById('nextBtn').classList.add('hidden');
+  document.getElementById('skipBtn').classList.add('hidden');
 
   const optionsEl = document.getElementById('options');
   optionsEl.innerHTML = '';
@@ -155,12 +186,22 @@ function renderStreak() {
 }
 
 // ---------- free play mode ----------
+function triggerSweepAnimation() {
+  const puzzleEl = document.getElementById('puzzle');
+  puzzleEl.classList.remove('sweep-in');
+  void puzzleEl.offsetWidth; // force reflow so the animation can replay on consecutive rounds
+  puzzleEl.classList.add('sweep-in');
+}
+
 function startFreePlay() {
+  triggerSweepAnimation();
+
   const rng = Math.random; // genuine randomness each round, not date-seeded
   const { msg, options } = pickMessageAndOptions(rng);
 
   const optionsEl = renderPuzzleShell(msg, options);
   renderSessionTally();
+  document.getElementById('skipBtn').classList.remove('hidden');
 
   optionsEl.querySelectorAll('.option').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -169,6 +210,7 @@ function startFreePlay() {
       sessionStats.total += 1;
       if (wasCorrect) sessionStats.correct += 1;
       renderSessionTally();
+      document.getElementById('skipBtn').classList.add('hidden');
       document.getElementById('nextBtn').classList.remove('hidden');
     });
   });
@@ -205,6 +247,26 @@ function setMode(mode) {
 
 // ---------- main ----------
 async function init() {
+  // Wire up interactivity immediately, independent of whether data loading
+  // succeeds — otherwise a slow/failed fetch leaves these buttons permanently dead.
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!POOL) {
+        document.getElementById('result').textContent = 'Still loading — try again in a second.';
+        return;
+      }
+      setMode(btn.dataset.mode);
+    });
+  });
+  document.getElementById('nextBtn').addEventListener('click', () => {
+    if (!POOL) return;
+    startFreePlay();
+  });
+  document.getElementById('skipBtn').addEventListener('click', () => {
+    if (!POOL) return;
+    startFreePlay();
+  });
+
   try {
     const res = await fetch('data/messages.json');
     if (!res.ok) {
@@ -216,10 +278,16 @@ async function init() {
     }
     POOL = pool;
 
-    document.querySelectorAll('.mode-btn').forEach(btn => {
-      btn.addEventListener('click', () => setMode(btn.dataset.mode));
-    });
-    document.getElementById('nextBtn').addEventListener('click', () => startFreePlay());
+    // Chat-name timeline is a nice-to-have, not critical — don't let a failure here
+    // break the actual game.
+    try {
+      const timelineRes = await fetch('data/chat_name_timeline.json');
+      if (timelineRes.ok) {
+        TIMELINE = await timelineRes.json();
+      }
+    } catch (timelineErr) {
+      TIMELINE = null;
+    }
 
     startDaily();
   } catch (err) {
