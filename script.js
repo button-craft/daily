@@ -1,4 +1,4 @@
-const PEOPLE = ['David', 'Ray', 'EJ', 'Noah', 'Ryan', 'Janna', 'Claire'];
+const PEOPLE = ['David', 'Ray', 'EJ', 'Ryan', 'Janna', 'Claire'];
 
 // ---------- deterministic seeded RNG (mulberry32), seeded from a date string ----------
 function hashStringToSeed(str) {
@@ -54,12 +54,28 @@ function formatTimestamp(isoStr) {
 
 // ---------- main ----------
 async function init() {
-  const dateKey = todayKey();
-  const rng = seededRandom(dateKey);
+  try {
+    const dateKey = todayKey();
+    const rng = seededRandom(dateKey);
 
-  const res = await fetch('data/messages.json');
-  const pool = await res.json();
+    const res = await fetch('data/messages.json');
+    if (!res.ok) {
+      throw new Error(`Couldn't load messages.json (HTTP ${res.status}). Check that it's inside a "data" folder next to index.html.`);
+    }
+    const pool = await res.json();
+    if (!Array.isArray(pool) || pool.length === 0) {
+      throw new Error('messages.json loaded but was empty or malformed.');
+    }
 
+    await runGame(dateKey, rng, pool);
+  } catch (err) {
+    document.getElementById('timestamp').textContent = 'Something went wrong loading today\u2019s message.';
+    document.getElementById('bubble').textContent = String(err.message || err);
+    document.getElementById('options').innerHTML = '';
+  }
+}
+
+async function runGame(dateKey, rng, pool) {
   const msgIndex = Math.floor(rng() * pool.length);
   const msg = pool[msgIndex];
 
