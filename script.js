@@ -77,16 +77,9 @@ function getChatNameAt(isoStr) {
   return TIMELINE[ans].n;
 }
 
-// Janna wasn't part of the group until later — excluding her as a guessable option
-// for anything sent before this date avoids an obviously-unfair distractor.
-const JANNA_CUTOFF = '2021-08-27T00:00:00';
-
 function pickMessageAndOptions(rng) {
   const msg = POOL[Math.floor(rng() * POOL.length)];
-  const eligiblePeople = msg.d < JANNA_CUTOFF
-    ? PEOPLE.filter(p => p !== 'Janna')
-    : PEOPLE;
-  const distractorPool = eligiblePeople.filter(p => p !== msg.s);
+  const distractorPool = PEOPLE.filter(p => p !== msg.s);
   const distractors = shuffleWithRng(distractorPool, rng).slice(0, 3);
   const options = shuffleWithRng([msg.s, ...distractors], rng);
   return { msg, options };
