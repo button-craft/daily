@@ -24,7 +24,12 @@
 
 <div class="wrap">
   <div class="brand">BUTTON Daily</div>
+  <div class="mode-toggle" id="modeToggle">
+    <button class="mode-btn active" data-mode="daily">Daily</button>
+    <button class="mode-btn" data-mode="free">Free Play</button>
+  </div>
   <div class="streak" id="streak"></div>
+  <div class="session-tally" id="sessionTally"></div>
 
   <div class="puzzle" id="puzzle">
     <div class="timestamp" id="timestamp">loading…</div>
@@ -36,6 +41,8 @@
     <div class="options" id="options"></div>
 
     <div class="result" id="result"></div>
+
+    <button class="next-btn hidden" id="nextBtn">Next →</button>
   </div>
 </div>
 
